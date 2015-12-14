@@ -1,0 +1,102 @@
+#!/bin/bash
+
+ColorOff='\\e[0m'       # Text Reset
+BWhite='\\e[1;37m'      # Bold White
+Blue='\e[0;34m'
+
+WIKIPATH="/var/www/wiki"
+BACKUPPATH="/backup"
+MYSQLUSER="user"
+MYSQLHOST="localhost"
+WIKIDB="wikidb"
+
+mediawiki=$1
+if [ -z $mediawiki ] 
+	then 
+		echo -e "\t\tВведите название архива с wiki для обновления\n\
+		\e[0;34mbackup\\e[0m или \e[0;34m -b \\e[0m для архивации всех файлов и базы данных wiki\n\
+		\e[0;34mextensions\\e[0m или \e[0;34m -e \\e[0m для обновления плагинов\n\
+		\e[0;34mrestorewiki <name>\\e[0m или \e[0;34m -w <name>\\e[0m для восстановления wiki из бекапа\n\
+		\e[0;34mrestoredb <name>\\e[0m или \e[0;34m -d <name>\\e[0m для восстановления базы данных wiki из бекапа"
+		exit 1
+
+elif [ `id -u` != 0 ]
+        then
+	        echo Вы не root
+	        exit 1
+fi
+
+dir=`pwd`
+
+case $mediawiki in
+
+	backup | -b)
+		echo "start backup database. Wait..."
+		nice -n 19 mysqldump -h $MYSQLHOST -u $MYSQLUSER -p $WIKIDB -c | nice -n 19 /bin/gzip -9 > "$BACKUPPATH"/wiki-wikidb-$(date '+%Y%m%d').sql.gz
+		echo "backup of database completed"
+		echo Size: `du -h "$BACKUPPATH"/wiki-wikidb-$(date '+%Y%m%d').sql.gz`
+		echo "start backup wiki folder. Wait..."
+		cd "$WIKIPATH"; nice -n 19 tar -czpf $BACKUPPATH/aidalinux-wiki-$(date '+%Y%m%d').tar.gz .
+		echo "backup wiki completed"
+		echo Size: `du -h "$BACKUPPATH"/aidalinux-wiki-$(date '+%Y%m%d').tar.gz`
+		exit 0
+	;;
+	extensions | -e)
+		for extensions in `ls $WIKIPATH/extensions` 
+			do 
+				cd $WIKIPATH/extensions/"$extensions" 
+				svn update 
+				cd ..
+		done
+
+		exit 0
+	;;
+	restorewiki | -w)
+		
+		[[ -z "$2" ]] && echo "Введите назазвание бекапа с wiki" && exit 1
+		[[ ! -d $WIKIPATH ]] && mkdir $WIKIPATH
+
+		backup_wiki="$2"
+		echo "restore wiki files"
+		tar xzpvf "$backup_wiki" -C $WIKIPATH --strip-components=1
+		echo "done"
+		echo "update database"
+		php $WIKIPATH/maintenance/update.php
+		echo "is all!!"
+		exit 0
+	;;
+	restoredb | -d)
+		
+		[[ -z "$2" ]] && echo "Введите название бекапа базы данных wiki" && exit 1
+
+		wiki_wikidb="$2"
+		echo "restore database"
+		gunzip -c "$wiki_wikidb" | mysql -h $MYSQLHOST -u $MYSQLUSER -p $WIKIDB
+		echo "done"
+		echo "update database"
+		php $WIKIPATH/maintenance/update.php
+		echo "is all!!"
+		exit 0
+	;;
+esac
+
+#Определение расширения архива с mediawiki
+arch=`echo $mediawiki | awk -F. '{ print $NF}'`
+
+if [ "$arch" = gz ]
+	then
+		echo "start update mediawiki"	
+	else
+		echo "Вы ошиблись в вводе аргумента"
+		exit 1
+fi
+
+cd "$dir"
+
+#update mediawiki
+tar xzf $mediawiki -C $WIKIPATH --strip-components=1
+
+
+echo "update database"
+php $WIKIPATH/maintenance/update.php
+echo "is all!!"

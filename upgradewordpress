@@ -1,0 +1,115 @@
+#!/bin/bash
+path="/var/www/site/"
+BACKUPPATH="/backup"
+MYSQLUSER="user"
+MYSQLHOST="localhost"
+WORDPRESSDB="wordpress_db"
+
+
+ColorOff='\e[0m'       # Text Reset
+BWhite='\e[1;37m'      # Bold White
+Blue='\e[0;34m'
+
+
+arg="$1"
+
+if [ -z "$arg" -o "$1" = "-h" -o "$1" = "--help" ] 
+	then 
+	echo -e "Введите:
+	$Blue upgrade$ColorOff или$Blue -u$ColorOff для обновления\n\
+        $Blue backup$ColorOff или$Blue -b$ColorOff для архивации всех файлов и базы данных wordpress\n\
+        $Blue extensions$ColorOff или$Blue -e$ColorOff для обновления плагинов\n\
+        $Blue restorewordpress <name>$ColorOff или$Blue -w <name>$ColorOff для восстановления wordpress из бекапа\n\
+        $Blue restoredb <name>$ColorOff или$Blue -d <name>$ColorOff для восстановления базы данных wordpress из бекапа"
+        	exit 1
+	
+elif [ `id -u` != 0 ]
+        then
+		echo "Вы не root"
+        	exit 1
+fi
+
+case $arg in
+	backup | -b)
+		echo "start backup database. Wait..."
+		nice -n 19 mysqldump -h $MYSQLHOST -u $MYSQLUSER -p "$WORDPRESSDB" -c | nice -n 19 /bin/gzip -9 > "$BACKUPPATH"/aidalinux-wordpress-db-$(date '+%Y%m%d').sql.gz
+		echo "backup of database completed"
+		echo Size: `du -h "$BACKUPPATH"/aidalinux-wordpress-db-$(date '+%Y%m%d').sql.gz`
+		
+		echo "start backup wordpress folder. Wait..."
+		cd "$path"; nice -n 19 tar -czf "$BACKUPPATH"/aidalinux-wordpress-$(date '+%Y%m%d').tar.gz . --exclude="./wiki" --exclude="./all" --exclude="./upload"
+		echo "backup wordpress completed"
+		echo Size: `du -h "$BACKUPPATH"/aidalinux-wordpress-$(date '+%Y%m%d').tar.gz` 
+		
+		exit 0
+	;;
+	restorewordpress | -w)
+
+                [[ -z "$2" ]] && echo "Введите назазвание бекапа с wordpress" && exit 1
+
+                backup_wordpress="$2"
+                echo "restore wordpress files"
+                tar xzvf "$2" -C "$path" --strip-components=1
+                echo "done"
+                exit 0
+        ;;
+        restoredb | -d)
+
+                [[ -z "$2" ]] && echo "Введите название бекапа базы данных wordpress" && exit 1
+
+                wordpress_db="$2"
+                echo "restore database"
+                gunzip -c "$wordpress_db" | mysql -h $MYSQLHOST -u $MYSQLUSER -p $WORDPRESSDB
+                echo "done"
+                exit 0
+        ;;
+	upgrade | -u)
+		
+		wordpress="$2"
+
+		[[ -z "$2" ]] && wget -P /var/tmp http://ru.wordpress.org/latest-ru_RU.zip && wordpress="/var/tmp/latest-ru_RU.zip"
+
+		arch=`echo "$wordpress" | awk -F. '{ print $NF}'`
+		if [ "$arch" = "zip" -o "$arch" = "gz" ]
+			then
+				echo "prepare to upgrade"
+				[ -d "$path"/upload/ ] || mkdir "$path"/upload/
+				cp -v -p -R "$path"/wp-content/ "$path"/wp-config.php "$path"/.htaccess "$path"/upload/
+				rm "$path"/wp*.php "$path"/license.txt "$path"/readme.html "$path"/xmlrpc.php
+				rm -rf "$path"/wp-admin/ "$path"/wp-includes/
+				cp -p "$path"/upload/wp-config.php "$path"
+	
+				echo "update wordpress"
+
+				if [ "$arch" = zip ]
+				        then
+					                unzip -o $wordpress -d $path
+				elif [ "$arch" = gz ]
+				        then
+					                tar xzf $wordpress -C $path --strip-components=1
+					else
+						exit 1
+				fi
+				
+				cp -rfpv "$path"/upload/* "$path"/wordpress/* "$path"
+				rm -rf "$path"/{upload,wordpress}
+				
+				echo "==============================================================================================="
+				echo -e "====$BWhite For update database you need open http://aidalinux.ru/wp-admin/upgrade.php in browser$ColorOff ===="
+				echo "==============================================================================================="
+			else
+				echo "Неизвестный тип архива, автоопределение работает только для zip и tar.gz"
+				exit 1	
+
+		fi
+	;;
+	*)
+
+		echo -e "$0: unrecognized option '$@' \nTry '$0 --help' for more information."
+		exit 1
+
+esac
+
+echo "is all!!"
+
+exit 0
